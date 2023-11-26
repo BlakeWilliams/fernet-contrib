@@ -15,63 +15,83 @@ type MyData struct {
 	Name   string
 }
 
-func TestStoreCookie(t *testing.T) {
-	verifier := NewVerifier("TheTruthIsOutThere")
-	router := fernet.New(func(rc fernet.RequestContext) fernet.RequestContext { return rc })
-
-	router.Get("/", func(ctx context.Context, rc fernet.RequestContext) {
-		session := New[MyData]("session", verifier)
-		err := session.FromRequest(rc)
-		require.NoError(t, err)
-
-		session.Data.UserID = 500
-		session.Data.Name = "Fox Mulder"
-
-		err = session.Write(rc)
-		require.NoError(t, err)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	res := httptest.NewRecorder()
-
-	router.ServeHTTP(res, req)
-
-	cookie := res.Result().Cookies()
-	session := New[MyData]("session", verifier)
-	err := session.FromCookie(cookie[0])
-
-	require.NoError(t, err)
-	require.Equal(t, "Fox Mulder", session.Data.Name)
-	require.Equal(t, 500, session.Data.UserID)
+type requestContext struct {
+	session *MyData
+	fernet.RequestContext
 }
-func TestStoreCookie_WriteIfChanged(t *testing.T) {
+
+func (rc *requestContext) SetSessionData(session *MyData) {
+	rc.session = session
+}
+
+func (rc *requestContext) SessionData() *MyData {
+	return rc.session
+}
+
+func TestMiddleware(t *testing.T) {
 	verifier := NewVerifier("TheTruthIsOutThere")
-
-	router := fernet.New(func(rc fernet.RequestContext) fernet.RequestContext { return rc })
-	router.Get("/", func(ctx context.Context, rc fernet.RequestContext) {
-		session := New[MyData]("session", verifier)
-		err := session.FromRequest(rc)
-		require.NoError(t, err)
-
-		session.Data.UserID = 500
-		session.Data.Name = "Fox Mulder"
-
-		err = session.WriteIfChanged(rc)
-		require.NoError(t, err)
+	router := fernet.New(func(rc fernet.RequestContext) *requestContext {
+		return &requestContext{
+			RequestContext: rc,
+		}
 	})
 
-	// Should set cookie since no cookies are set
+	// TODO: remove init function and rely on SessionData() to initialize
+	// session.
+	store := New[*MyData]("session", verifier, func() *MyData { return &MyData{} })
+	cookie, err := store.Cookie(&MyData{UserID: 500, Name: "Fox Mulder"})
+	require.NoError(t, err)
+
+	router.Use(Middleware[*requestContext, *MyData](store))
+
+	router.Get("/", func(ctx context.Context, rc *requestContext) {
+		require.Equal(t, 500, rc.session.UserID)
+		require.Equal(t, "Fox Mulder", rc.session.Name)
+
+		rc.session.UserID = 200
+		rc.session.Name = "Dana Scully"
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	res := httptest.NewRecorder()
+
+	router.ServeHTTP(res, req)
+
+	newCookie := res.Result().Cookies()[0]
+	data, err := store.FromCookie(newCookie)
+	require.NoError(t, err)
+
+	require.Equal(t, 200, data.UserID)
+	require.Equal(t, "Dana Scully", data.Name)
+}
+
+func TestMiddleware_Init(t *testing.T) {
+	verifier := NewVerifier("TheTruthIsOutThere")
+	router := fernet.New(func(rc fernet.RequestContext) *requestContext {
+		return &requestContext{
+			RequestContext: rc,
+		}
+	})
+
+	store := New[*MyData]("session", verifier, func() *MyData { return &MyData{} })
+	router.Use(Middleware[*requestContext, *MyData](store))
+
+	var innerRC *requestContext
+	router.Get("/", func(ctx context.Context, rc *requestContext) {
+		require.Equal(t, 0, rc.session.UserID)
+		require.Equal(t, "", rc.session.Name)
+
+		rc.session.UserID = 500
+		rc.session.Name = "Fox Mulder"
+
+		innerRC = rc
+	})
+
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-	setCookie := res.Result().Header.Get("Set-Cookie")
-	require.NotEmpty(t, setCookie)
 
-	// Second request should not have cookie set, since nothing has changed.
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Cookie", setCookie)
-	res = httptest.NewRecorder()
 	router.ServeHTTP(res, req)
-	setCookie = res.Result().Header.Get("Set-Cookie")
-	require.Empty(t, setCookie)
+	require.Equal(t, 500, innerRC.session.UserID)
+	require.Equal(t, "Fox Mulder", innerRC.session.Name)
 }
