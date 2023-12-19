@@ -26,7 +26,7 @@ func TestWebpack(t *testing.T) {
 	r := fernet.New(func(r fernet.RequestContext) fernet.RequestContext {
 		return r
 	})
-	r.UseMetal(webpack.Middleware())
+	r.UseMetal(webpack.Metal())
 
 	testCases := map[string]struct {
 		path              string

@@ -79,6 +79,19 @@ func (w *Webpack) Start(ctx context.Context, out io.Writer) error {
 
 	mlog.Debug(ctx, "Starting webpack server", mlog.Fields{"port": w.Port})
 
+	// Shutdown webpack when context is cancelled, but only after the server starts
+	defer func() {
+		go func() {
+			<-ctx.Done()
+
+			fmt.Println("Shutting down webpack")
+
+			if w.cmd != nil && w.cmd.Process != nil {
+				_ = w.cmd.Process.Signal(os.Interrupt)
+			}
+		}()
+	}()
+
 	return cmd.Start()
 }
 
@@ -103,14 +116,14 @@ func (w *Webpack) Stop() error {
 	return w.cmd.Wait()
 }
 
-// Middleware accepts a logger and returns a middleware that can be used in
+// Metal accepts a logger and returns a middleware that can be used in
 // conjunction with medium.Use.
 //
 // The middleware expects for webpack to be executable in the current working
 // directory.
 //
 // This is not intended for production use, just for development.
-func (w *Webpack) Middleware() func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
+func (w *Webpack) Metal() func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 	return func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		start := time.Now()
 
