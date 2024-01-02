@@ -37,17 +37,20 @@ func Middleware[RC Sessionable[T], T any](store Store[T]) func(ctx context.Conte
 			panic(err)
 		}
 
-		data, _ := store.FromCookie(cookie)
 		originalData, err := store.FromCookie(cookie)
 		if err != nil {
 			panic(err)
 		}
 
+		data, err := store.FromCookie(cookie)
+		if err != nil {
+			panic(err)
+		}
 		rc.SetSessionData(data)
 
 		defer func() {
-			if !reflect.DeepEqual(originalData, data) {
-				err = store.Write(rc, data)
+			if !reflect.DeepEqual(originalData, rc.SessionData()) {
+				err = store.Write(rc, rc.SessionData())
 				if err != nil {
 					panic(err)
 				}
