@@ -38,7 +38,7 @@ func TestMiddleware(t *testing.T) {
 
 	// TODO: remove init function and rely on SessionData() to initialize
 	// session.
-	store := New[*MyData]("session", verifier, func() *MyData { return &MyData{} })
+	store := New[*MyData]("session", verifier, nil, func() *MyData { return &MyData{} })
 	cookie, err := store.Cookie(&MyData{UserID: 500, Name: "Fox Mulder"})
 	require.NoError(t, err)
 
@@ -64,6 +64,11 @@ func TestMiddleware(t *testing.T) {
 
 	require.Equal(t, 200, data.UserID)
 	require.Equal(t, "Dana Scully", data.Name)
+
+	// Safe defaults
+	require.Equal(t, http.SameSiteLaxMode, newCookie.SameSite)
+	require.True(t, newCookie.Secure)
+	require.True(t, newCookie.HttpOnly)
 }
 
 func TestMiddleware_Init(t *testing.T) {
@@ -74,7 +79,7 @@ func TestMiddleware_Init(t *testing.T) {
 		}
 	})
 
-	store := New[*MyData]("session", verifier, func() *MyData { return &MyData{} })
+	store := New[*MyData]("session", verifier, nil, func() *MyData { return &MyData{} })
 	router.Use(Middleware[*requestContext, *MyData](store))
 
 	var innerRC *requestContext
@@ -94,4 +99,25 @@ func TestMiddleware_Init(t *testing.T) {
 	router.ServeHTTP(res, req)
 	require.Equal(t, 500, innerRC.session.UserID)
 	require.Equal(t, "Fox Mulder", innerRC.session.Name)
+}
+
+func TestCookieOptions(t *testing.T) {
+	verifier := NewVerifier("TheTruthIsOutThere")
+	options := &CookieOptions{
+		Domain:   "example.com",
+		MaxAge:   3600,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   true,
+		HTTPOnly: true,
+	}
+	store := New[*MyData]("session", verifier, options, func() *MyData { return &MyData{} })
+
+	cookie, err := store.Cookie(&MyData{UserID: 500, Name: "Fox Mulder"})
+	require.NoError(t, err)
+
+	require.Equal(t, "example.com", cookie.Domain)
+	require.Equal(t, 3600, cookie.MaxAge)
+	require.Equal(t, http.SameSiteStrictMode, cookie.SameSite)
+	require.True(t, cookie.Secure)
+	require.True(t, cookie.HttpOnly)
 }

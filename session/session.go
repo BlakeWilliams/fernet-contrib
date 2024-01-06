@@ -67,18 +67,48 @@ func Middleware[RC Sessionable[T], T any](store Store[T]) func(ctx context.Conte
 // The data stored is still readable by the client, so secrets and sensitive
 // data should not be stored in Store.Data.
 type Store[T any] struct {
-	verifier  Verifier
-	Name      string
-	initState func() T
+	verifier   Verifier
+	Name       string
+	initState  func() T
+	cookieOpts *CookieOptions
+}
+
+// CookieOptions are the options that are used when creating the underlying
+// http.Cookie.
+type CookieOptions struct {
+	// Path is the path that the cookie is valid for. Defaults to unset.
+	Path string
+	// Domain is the domain that the cookie is valid for. Defaults to unset.
+	Domain string
+	// MaxAge is the maximum age of the cookie in seconds. Defaults to unset.
+	MaxAge int
+	// Secure indicates whether the cookie should only be sent over HTTPS.
+	// Defaults to false, ensuring the cookie is sent over only HTTPS.
+	Secure bool
+	// HttpOnly indicates whether the cookie should only be sent via HTTP(S)
+	HTTPOnly bool
+	// SameSite indicates whether the cookie should only be sent to the same
+	// site. Defaults to http.SameSiteLaxMode.
+	SameSite http.SameSite
 }
 
 // New creates a new Store with the given name and verifies Data using the
-// passed in Verifier.
-func New[T any](name string, verifier Verifier, initState func() T) Store[T] {
+// passed in Verifier. If opts is nil, the default options will result in a
+// cookie that is SameSiteLaxMode, Secure, and HTTPOnly.
+func New[T any](name string, verifier Verifier, opts *CookieOptions, initState func() T) Store[T] {
+	if opts == nil {
+		opts = &CookieOptions{
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+			HTTPOnly: true,
+		}
+	}
+
 	return Store[T]{
-		Name:      name,
-		initState: initState,
-		verifier:  verifier,
+		Name:       name,
+		initState:  initState,
+		verifier:   verifier,
+		cookieOpts: opts,
 	}
 }
 
@@ -144,9 +174,28 @@ func (s Store[T]) Cookie(data T) (*http.Cookie, error) {
 		return nil, fmt.Errorf("could not encode data: %w", err)
 	}
 
-	return &http.Cookie{
+	cookie := &http.Cookie{
 		Name:  s.Name,
 		Path:  "/",
 		Value: string(encodedData),
-	}, nil
+	}
+
+	if s.cookieOpts.Domain != "" {
+		cookie.Domain = s.cookieOpts.Domain
+	}
+
+	if s.cookieOpts.MaxAge != 0 {
+		cookie.MaxAge = s.cookieOpts.MaxAge
+	}
+
+	if s.cookieOpts.SameSite != 0 {
+		cookie.SameSite = s.cookieOpts.SameSite
+	} else {
+		cookie.SameSite = http.SameSiteLaxMode
+	}
+
+	cookie.Secure = s.cookieOpts.Secure
+	cookie.HttpOnly = s.cookieOpts.HTTPOnly
+
+	return cookie, nil
 }
